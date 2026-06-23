@@ -91,17 +91,23 @@ jobs:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
 
+      - name: Override goreleaser owner (old tags still point to voocel)
+        run: |
+          # 核心修复：旧 tag 的 .goreleaser.yml 中 release owner 是 voocel，
+          # 需要用 sed 替换为 broeeee，否则 goreleaser 会尝试写入上游仓库
+          sed -i 's/owner: voocel/owner: broeeee/g' .goreleaser.yml
+          echo ">>> Goreleaser release target updated:"
+          grep -A2 'release:' .goreleaser.yml
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
       - name: Generate release notes
-        id: changelog
         run: |
           chmod +x .github/scripts/gen-changelog.sh
 
-          # 尝试 AI 生成 release notes，失败则用 commit 列表兜底
           if .github/scripts/gen-changelog.sh > release-notes.md 2>&1; then
             echo ">>> AI-generated release notes"
           else
@@ -113,7 +119,8 @@ jobs:
               git log --pretty=format:"- %s" --no-merges -50 > release-notes.md
             fi
           fi
-          echo "status=ok" >> "$GITHUB_OUTPUT"
+          echo ">>> Release notes preview:"
+          head -5 release-notes.md
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7
