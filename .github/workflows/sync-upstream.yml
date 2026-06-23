@@ -86,11 +86,18 @@ jobs:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
 
-      - name: Override goreleaser owner (old tags still point to voocel upstream)
+      - name: Override goreleaser owner for fork
         run: |
+          # 旧 tag 的 .goreleaser.yml 中 release owner 是 voocel，
+          # sed 改掉后 git 会认为文件已修改（dirty），但 GoReleaser v2 不支持 --skip=dirty。
+          # 用 git update-index --assume-unchanged 让 git 忽略这个修改，
+          # 但 goreleaser 从磁盘读取时将拿到修改后的 owner: broeeee。
           sed -i 's/owner: voocel/owner: broeeee/g' .goreleaser.yml
-          echo ">>> Goreleaser release target:"
+          git update-index --assume-unchanged .goreleaser.yml
+          echo ">>> Patched release target:"
           grep -A2 'release:' .goreleaser.yml
+          echo ">>> git status (should be clean):"
+          git status --short
 
       - uses: actions/setup-go@v5
         with:
@@ -122,6 +129,5 @@ jobs:
             release --clean
             --release-notes=release-notes.md
             --skip=validate
-            --skip=dirty
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
