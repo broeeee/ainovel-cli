@@ -7,21 +7,21 @@ on:
   workflow_dispatch:
     inputs:
       force_sync:
-        description: "强制同步所有缺失的上游 tags 并重建 Releases"
+        description: "强制重建所有上游缺失的 Releases"
         type: boolean
         default: false
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
-  # ---- Step 1: 检测上游新 tag 并同步代码 ----
+  # ============================================================
+  # Job 1: 检测上游新 tag，同步分支代码，推送 tag 到 fork
+  # ============================================================
   check-and-sync:
     runs-on: ubuntu-latest
     outputs:
-      new_tags: ${{ steps.detect.outputs.new_tags }}
-      has_new: ${{ steps.detect.outputs.has_new }}
+      new_tags_json: ${{ steps.detect.outputs.new_tags }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,50 +34,51 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch upstream and detect new tags
+      - name: Fetch upstream & detect new tags
         id: detect
         run: |
+          set -euo pipefail
+
           git remote add upstream https://github.com/voocel/ainovel-cli.git
           git fetch upstream --tags --prune
 
-          # 确定默认分支
           DEFAULT_BRANCH=$(git remote show upstream | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
-          echo "default_branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
-          echo "Upstream default branch: $DEFAULT_BRANCH"
+          echo ">>> Upstream default branch: ${DEFAULT_BRANCH}"
 
-          # 同步 main 分支
-          git checkout "$DEFAULT_BRANCH" 2>/dev/null || git checkout -b "$DEFAULT_BRANCH"
-          git merge "upstream/$DEFAULT_BRANCH" --no-edit --allow-unrelated-histories || \
-            git reset --hard "upstream/$DEFAULT_BRANCH"
+          # 同步主分支（merge 优先，冲突时用 upstream 覆盖）
+          git checkout "${DEFAULT_BRANCH}" 2>/dev/null || git checkout -b "${DEFAULT_BRANCH}"
+          if ! git merge "upstream/${DEFAULT_BRANCH}" --no-edit --allow-unrelated-histories; then
+            echo "Merge conflict, resetting to upstream/${DEFAULT_BRANCH}"
+            git reset --hard "upstream/${DEFAULT_BRANCH}"
+          fi
+          git push origin "${DEFAULT_BRANCH}" --force-with-lease
 
-          git push origin "$DEFAULT_BRANCH" --force-with-lease
-
-          # 检测本地缺失的上游 tag（取最新的 5 个）
+          # 检测本地缺失的上游 tag（取最新 10 个）
           NEW_TAGS="[]"
           FORCE="${{ inputs.force_sync }}"
-          for tag in $(git tag --list 'v*' --sort=-v:refname --merged "upstream/$DEFAULT_BRANCH" | head -5); do
-            if ! git rev-parse "$tag" >/dev/null 2>&1 || [ "$FORCE" = "true" ]; then
-              NEW_TAGS=$(echo "$NEW_TAGS" | jq --arg t "$tag" '. + [$t]')
-              # Push tag to origin
-              git push origin "refs/tags/$tag" 2>/dev/null || echo "Tag $tag already pushed"
+
+          for tag in $(git tag --list 'v*' --sort=-v:refname --merged "upstream/${DEFAULT_BRANCH}" | head -10); do
+            if ! git rev-parse "${tag}" >/dev/null 2>&1 || [ "${FORCE}" = "true" ]; then
+              echo "  => New tag detected: ${tag}"
+              NEW_TAGS=$(echo "${NEW_TAGS}" | jq --arg t "${tag}" '. + [$t]')
+              git push origin "refs/tags/${tag}"
             fi
           done
 
-          HAS_NEW=$(echo "$NEW_TAGS" | jq 'length > 0')
-          echo "new_tags=$NEW_TAGS" >> $GITHUB_OUTPUT
-          echo "has_new=$HAS_NEW" >> $GITHUB_OUTPUT
-          echo "Detected new tags: $NEW_TAGS"
+          echo "new_tags=${NEW_TAGS}" >> $GITHUB_OUTPUT
+          echo ">>> Total new tags: $(echo "${NEW_TAGS}" | jq 'length')"
 
-  # ---- Step 2: 为每个新 tag 运行 GoReleaser 创建 Release ----
+  # ============================================================
+  # Job 2: 为每个新 tag 运行 GoReleaser 发布 Release
+  # ============================================================
   gorelease:
     needs: check-and-sync
-    if: needs.check-and-sync.outputs.has_new == 'true'
+    if: needs.check-and-sync.outputs.new_tags_json != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        tag: ${{ fromJSON(needs.check-and-sync.outputs.new_tags) }}
-
+        tag: ${{ fromJSON(needs.check-and-sync.outputs.new_tags_json) }}
     steps:
       - name: Checkout at tag
         uses: actions/checkout@v4
@@ -93,7 +94,7 @@ jobs:
       - name: Generate release notes
         run: |
           chmod +x .github/scripts/gen-changelog.sh
-          .github/scripts/gen-changelog.sh > release-notes.md
+          .github/scripts/gen-changelog.sh > release-notes.md || true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
