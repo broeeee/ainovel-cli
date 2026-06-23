@@ -65,7 +65,10 @@ jobs:
             fi
           done
 
-          echo "new_tags=${NEW_TAGS}" >> $GITHUB_OUTPUT
+          # 使用 EOF 分隔符安全写入 JSON 到 GITHUB_OUTPUT
+          echo "new_tags<<__TAGS_EOF__" >> "$GITHUB_OUTPUT"
+          echo "${NEW_TAGS}" >> "$GITHUB_OUTPUT"
+          echo "__TAGS_EOF__" >> "$GITHUB_OUTPUT"
           echo ">>> Total new tags: $(echo "${NEW_TAGS}" | jq 'length')"
 
   # ============================================================
