@@ -2,7 +2,6 @@ name: Sync Upstream & Release
 
 on:
   schedule:
-    # 每天 UTC 0:00 自动同步（北京时间 8:00）
     - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
@@ -23,8 +22,7 @@ jobs:
     outputs:
       new_tags_json: ${{ steps.detect.outputs.new_tags }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -45,7 +43,6 @@ jobs:
           DEFAULT_BRANCH=$(git remote show upstream | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
           echo ">>> Upstream default branch: ${DEFAULT_BRANCH}"
 
-          # 同步主分支（merge 优先，冲突时用 upstream 覆盖）
           git checkout "${DEFAULT_BRANCH}" 2>/dev/null || git checkout -b "${DEFAULT_BRANCH}"
           if ! git merge "upstream/${DEFAULT_BRANCH}" --no-edit --allow-unrelated-histories; then
             echo "Merge conflict, resetting to upstream/${DEFAULT_BRANCH}"
@@ -53,7 +50,6 @@ jobs:
           fi
           git push origin "${DEFAULT_BRANCH}" --force-with-lease
 
-          # 检测本地缺失的上游 tag（取最新 10 个）
           NEW_TAGS="[]"
           FORCE="${{ inputs.force_sync }}"
 
@@ -85,22 +81,18 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout at tag
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
 
-      - name: Override goreleaser owner (old tags still point to voocel)
+      - name: Override goreleaser owner (old tags still point to voocel upstream)
         run: |
-          # 核心修复：旧 tag 的 .goreleaser.yml 中 release owner 是 voocel，
-          # 需要用 sed 替换为 broeeee，否则 goreleaser 会尝试写入上游仓库
           sed -i 's/owner: voocel/owner: broeeee/g' .goreleaser.yml
-          echo ">>> Goreleaser release target updated:"
+          echo ">>> Goreleaser release target:"
           grep -A2 'release:' .goreleaser.yml
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
@@ -122,14 +114,14 @@ jobs:
           echo ">>> Release notes preview:"
           head -5 release-notes.md
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
           args: >-
             release --clean
             --release-notes=release-notes.md
-            --verbose
+            --skip=validate
+            --skip=dirty
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
