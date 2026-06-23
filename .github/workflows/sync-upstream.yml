@@ -22,7 +22,7 @@ jobs:
     outputs:
       new_tags_json: ${{ steps.detect.outputs.new_tags }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -81,7 +81,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ matrix.tag }}
           fetch-depth: 0
