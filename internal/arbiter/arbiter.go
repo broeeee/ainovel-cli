@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/voocel/agentcore"
-	"github.com/voocel/agentcore/llm"
 )
 
 // decideMaxTokens 单次裁定的输出上限;裁定 JSON 很小,大头留给推理模型的思考预算
@@ -30,7 +29,7 @@ import (
 const decideMaxTokens = 8192
 
 // decideMaxAttempts 总尝试次数:解析失败带反馈重问,最多 3 次后返回错误,
-// 由调用方按场景降级(干预回显"未能理解"、启动显式报错)。
+// 由调用方回显真实失败原因并保证不执行未裁定的动作。
 const decideMaxAttempts = 3
 
 // modelMaxRetries 与 Worker 的 subagentMaxRetries 保持一致。这里只处理请求层的
@@ -48,8 +47,6 @@ func decide[T any](ctx context.Context, model agentcore.ChatModel, systemPrompt,
 	if model == nil {
 		return zero, fmt.Errorf("arbiter: model 未配置")
 	}
-	// 裁定是分诊判断,不需要深思考:能关就关,腾预算给 JSON(与 userrules 同策略)。
-	thinking, _ := llm.ThinkingPolicyFor(model).Resolve(agentcore.ThinkingOff)
 
 	messages := []agentcore.Message{
 		{Role: agentcore.RoleSystem, Content: []agentcore.ContentBlock{agentcore.TextBlock(systemPrompt)}},
@@ -58,8 +55,9 @@ func decide[T any](ctx context.Context, model agentcore.ChatModel, systemPrompt,
 
 	var lastErr error
 	for attempt := 1; attempt <= decideMaxAttempts; attempt++ {
+		// 不覆盖 thinking：off 也是 provider/model 专属参数，不是普通 chat
+		// 模型的通用 no-op。裁定沿用模型默认，只约束结构化输出预算。
 		resp, err := generateWithRetry(ctx, model, messages,
-			agentcore.WithThinking(thinking),
 			agentcore.WithMaxTokens(decideMaxTokens))
 		if err != nil {
 			return zero, fmt.Errorf("arbiter: 模型调用失败: %w", err)
